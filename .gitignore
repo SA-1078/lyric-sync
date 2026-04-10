@@ -5,3 +5,5 @@ node_modules/
 *.wav
 *.m4a
 lrc/
+.gitignore
+__pycache__/

@@ -19,6 +19,12 @@ import os
 import re
 import argparse
 
+# Importar post-procesador de letras
+try:
+    from lyrics_postprocess import postprocess_segments
+    HAS_POSTPROCESS = True
+except ImportError:
+    HAS_POSTPROCESS = False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Utilidades
@@ -79,28 +85,38 @@ def generate_lrc(
     language: str = None,
     word_mode: bool = False,
 ):
-    print(f"\n🎙️  LyricSync — Whisper Local (Offline)")
-    print(f"{'─' * 55}")
-    print(f"📁 Audio   : {audio_path}")
-    print(f"📄 Output  : {output_path}")
-    print(f"🤖 Modelo  : {model_name}")
-    print(f"🌐 Idioma  : {language if language else 'auto-detectar'}")
-    print(f"📝 Modo    : {'palabra a palabra' if word_mode else 'por segmento'}")
+    # ── Header ─────────────────────────────────────────────────────────────────
+    basename = os.path.basename(audio_path)
+    lrc_name = os.path.basename(output_path)
+    lang_display = language if language else "auto"
+
     print()
+    print("  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║  🎙️  LyricSync — Transcripción con Whisper IA (Offline)  ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+    print()
+    print(f"  🎵 Archivo  : {basename}")
 
     if not os.path.exists(audio_path):
-        print(f"❌ No se encontró el archivo: {audio_path}", file=sys.stderr)
+        print(f"\n  ❌ No se encontró el archivo: {audio_path}", file=sys.stderr)
+        print(f"     Verifica que la ruta sea correcta.\n", file=sys.stderr)
         sys.exit(1)
 
     size_mb = os.path.getsize(audio_path) / (1024 * 1024)
-    print(f"📊 Tamaño  : {size_mb:.2f} MB")
+    print(f"  📦 Tamaño   : {size_mb:.2f} MB")
+    print(f"  🤖 Modelo   : {model_name}")
+    print(f"  🌐 Idioma   : {lang_display}")
+    print(f"  📂 Salida   : lrc/{lrc_name}")
+    print()
 
-    print(f"⏳ Cargando modelo '{model_name}'...")
-    print(f"   (La primera vez descarga el modelo, luego es instantáneo)\n")
+    print(f"  ⏳ Cargando modelo '{model_name}'...")
+    print(f"     (Primera vez descarga el modelo, luego es instantáneo)")
+    print()
 
     model = whisper.load_model(model_name)
 
-    print(f"🔄 Transcribiendo... puede tomar 10-90 seg según el audio.\n")
+    print(f"  🔄 Transcribiendo... esto puede tardar según tu CPU/GPU y el tamaño del audio.")
+    print()
 
     transcribe_kwargs = {
         "verbose": False,
@@ -125,8 +141,18 @@ def generate_lrc(
         print("❌ No se detectó audio con voz en el archivo.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"✅ {len(segments)} segmentos transcritos")
+    print(f"✅ {len(segments)} segmentos transcritos (sin procesar)")
     print(f"🌐 Idioma detectado: {detected_lang}")
+
+    # ── Post-procesamiento inteligente ────────────────────────────────────────
+    # Limpiar segmentos antes de construir el LRC
+    for seg in segments:
+        seg["text"] = clean_text(seg.get("text", ""))
+
+    if HAS_POSTPROCESS:
+        segments = postprocess_segments(segments, similarity_threshold=85)
+    else:
+        print("⚠️  Post-procesador no disponible. Instala: pip install rapidfuzz")
 
     # ── Construir líneas LRC ──────────────────────────────────────────────────
     title = os.path.splitext(os.path.basename(audio_path))[0]
@@ -137,7 +163,7 @@ def generate_lrc(
     ]
 
     if word_mode:
-        # Modo palabra a palabra — cada palabra es una línea con su timestamp
+        # Modo palabra a palabra
         for seg in segments:
             words = seg.get("words", [])
             for w in words:
@@ -146,17 +172,11 @@ def generate_lrc(
                     ts = to_lrc_timestamp(w["start"])
                     lrc_lines.append(f"[{ts}]{text}")
     else:
-        # Modo segmento — mejor para leer, texto más natural
-        prev_text = None  # para detectar y eliminar alucinaciones repetidas
+        # Modo segmento
         for seg in segments:
-            text = clean_text(seg["text"])
+            text = seg["text"].strip()
             if not text:
                 continue
-
-            # Saltar si es idéntico al segmento anterior (alucinación de Whisper)
-            if text == prev_text:
-                continue
-            prev_text = text
 
             # Dividir segmentos muy largos para mejor sincronía visual
             parts = split_long_segment(text, seg["start"], seg["end"])
@@ -170,21 +190,27 @@ def generate_lrc(
         f.write(lrc_content)
 
     # ── Reporte final ─────────────────────────────────────────────────────────
-    lyric_count = len([l for l in lrc_lines if l.startswith("["*1) and not l.startswith("[ti") and not l.startswith("[by")])
+    lyric_count = len([l for l in lrc_lines if l.startswith("[") and not l.startswith("[ti") and not l.startswith("[by")])
+    lrc_name = os.path.basename(output_path)
 
-    print(f"\n🎉 ¡Archivo LRC generado exitosamente!")
-    print(f"   → {output_path}  ({lyric_count} líneas de letra)")
-    print(f"\n📋 Preview (primeras 8 líneas de letra):")
-    print("─" * 50)
+    print()
+    print("  ──────────────────────────────────────────────────────")
+    print(f"  🎉 ¡Transcripción completada!")
+    print(f"  📂 Archivo  : lrc/{lrc_name}")
+    print(f"  🎼 Líneas   : {lyric_count} líneas sincronizadas")
+    print()
+    print(f"  📋 Vista previa (primeras 8 líneas):")
+    print("  ──────────────────────────────────────────────────────")
     count = 0
     for line in lrc_lines:
         if line.startswith("[") and not line.startswith("[ti") and not line.startswith("[by"):
-            print(line)
+            print(f"     {line}")
             count += 1
             if count >= 8:
+                if lyric_count > 8:
+                    print(f"     ... y {lyric_count - 8} líneas más")
                 break
-    print("─" * 50)
-    print('\n▶️  Ahora corre: node index.js\n')
+    print("  ──────────────────────────────────────────────────────")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

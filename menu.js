@@ -94,8 +94,7 @@ async function generateLrc(audioPath, model = "small", language = "es") {
   const scriptPath = path.join(__dirname, "whisper_transcribe.py");
 
   return new Promise((resolve) => {
-    console.log(chalk.cyan(`\n🤖 Generando letras para: ${chalk.white(path.basename(audioPath))}`));
-    console.log(chalk.gray(`   Modelo: ${model} | Idioma: ${language} | Salida: ${lrcPath}\n`));
+    console.log("");
 
     const proc = spawn(
       "python",
@@ -105,15 +104,19 @@ async function generateLrc(audioPath, model = "small", language = "es") {
 
     proc.on("close", (code) => {
       if (code === 0) {
-        console.log(chalk.green(`\n✅ Letras guardadas en: lrc/${path.basename(lrcPath)}`));
+        console.log(chalk.bold.green(`\n  ✅ ¡Letras generadas exitosamente!`));
+        console.log(chalk.gray(`     Archivo: lrc/${path.basename(lrcPath)}`));
       } else {
-        console.log(chalk.red(`\n❌ Error al generar letras (código ${code})`));
+        console.log(chalk.bold.red(`\n  ❌ Hubo un error durante la transcripción (código: ${code})`));
+        console.log(chalk.gray(`     Intenta con un modelo más pequeño o verifica que el archivo de audio no esté dañado.`));
       }
       resolve(code === 0);
     });
 
     proc.on("error", () => {
-      console.error(chalk.red("❌ No se pudo ejecutar Python."));
+      console.error(chalk.red("\n  ❌ No se pudo ejecutar Python."));
+      console.error(chalk.gray("     Asegúrate de tener Python 3.9+ instalado y en el PATH."));
+      console.error(chalk.gray("     Descarga: https://www.python.org/downloads/"));
       resolve(false);
     });
   });
@@ -125,11 +128,12 @@ function playSong(audioPath) {
   const scriptPath = path.join(__dirname, "index.js");
 
   if (!fs.existsSync(lrcPath)) {
-    console.log(chalk.yellow("⚠️  Esta canción no tiene letras generadas aún. Genera primero con Whisper."));
+    console.log(chalk.yellow("\n  ⚠️  Esta canción aún no tiene letras generadas."));
+    console.log(chalk.gray("     Primero genéralas seleccionando ‘Generar letras’ en el menú.\n"));
     return;
   }
 
-  console.log(chalk.cyan(`\n▶️  Reproduciendo: ${chalk.white(path.basename(audioPath))}\n`));
+  console.log(chalk.cyan(`\n  ▶️  Reproduciendo: ${chalk.bold.white(path.basename(audioPath))}\n`));
   const proc = spawn("node", [scriptPath, "--audio", audioPath, "--lrc", lrcPath], {
     stdio: "inherit",
     env: SYSTEM_ENV,
@@ -145,28 +149,33 @@ async function songActionMenu(audioPath, currentFolder) {
 
   console.log("");
   console.log(chalk.bold.white(`  🎵 ${truncate(name, 50)}`));
-  console.log(chalk.gray(`  ${audioPath}`));
-  console.log(chalk.gray(`  Letras: ${lrcExists ? chalk.green("✅ Generadas") : chalk.yellow("⚠️  Sin generar")}`));
+  console.log(chalk.gray(`     ${audioPath}`));
+  if (lrcExists) {
+    const lrcPath = getLrcPath(audioPath);
+    const lineCount = fs.readFileSync(lrcPath, "utf-8").split("\n").filter(l => l.match(/^\[\d/)).length;
+    console.log(chalk.green(`     ✅ Letras disponibles (${lineCount} líneas sincronizadas)`));
+  } else {
+    console.log(chalk.yellow(`     ⚠️  Sin letras — necesita transcripción con Whisper`));
+  }
   console.log("");
 
   const choices = [];
 
   if (lrcExists) {
     choices.push({ name: "▶️  Reproducir con letras sincronizadas", value: "play" });
-    choices.push({ name: "🔄 Regenerar letras (con Whisper)", value: "regen" });
-    choices.push({ name: "📄 Ver archivo .lrc", value: "view" });
+    choices.push({ name: "🔄 Regenerar letras (volver a transcribir)", value: "regen" });
+    choices.push({ name: "📝 Ver contenido del archivo .lrc", value: "view" });
   } else {
-    choices.push({ name: "🤖 Generar letras — small  (recomendado, ~1 min)", value: "gen_small" });
-    choices.push({ name: "🤖 Generar letras — medium (más preciso, ~10-15 min en CPU)", value: "gen_medium" });
+    choices.push({ name: "🤖 Generar letras con Whisper IA", value: "gen_small" });
   }
 
   choices.push(new inquirer.Separator());
-  choices.push({ name: "← Volver a la lista de canciones", value: "back" });
+  choices.push({ name: chalk.gray("← Volver al listado"), value: "back" });
 
   const { action } = await inquirer.prompt([{
     type: "list",
     name: "action",
-    message: "¿Qué quieres hacer?",
+    message: "¿Qué deseas hacer con esta canción?",
     choices,
     pageSize: 10,
   }]);
@@ -178,28 +187,31 @@ async function songActionMenu(audioPath, currentFolder) {
 
     case "gen_small":
     case "regen": {
-      // Preguntar qué modelo usar antes de regenerar
       const { chosenModel } = await inquirer.prompt([{
         type: "list",
         name: "chosenModel",
-        message: "¿Qué modelo de Whisper usar?",
+        message: "Elige la calidad de transcripción:",
         choices: [
-          { name: "small   — ~1 min aprox/canción  · buena precisión · rápido (recomendado)", value: "small" },
-          { name: "base    — ~25 seg aprox/canción · precisión media  · más rápido",           value: "base"  },
-          { name: "medium  — ~10-15 min aprox/canción · más preciso   · ⚠️  muy lento en CPU", value: "medium" },
+          { name: "base   - Rapido (~25 seg)     - Precision media - Para pruebas rapidas", value: "base" },
+          { name: "small  - Normal (~1 min)      - Buena precision - Recomendado", value: "small" },
+          { name: "medium - Lento  (~5-15 min)   - Alta precision  - Requiere buen CPU/GPU", value: "medium" },
+          new inquirer.Separator(),
+          { name: chalk.gray("← Volver sin generar"), value: "__back__" },
         ],
         default: "small",
       }]);
+
+      if (chosenModel === "__back__") break;
 
       if (chosenModel === "medium") {
         const { ok } = await inquirer.prompt([{
           type: "confirm",
           name: "ok",
-          message: chalk.yellow("⚠️  El modelo 'medium' puede tardar 10-15 min para una canción de 3 min. ¿Continuar?"),
+          message: chalk.yellow(`⚠️  'medium' puede tardar entre 5 y 15 minutos dependiendo de tu archivo y PC. ¿Deseas continuar?`),
           default: false,
         }]);
         if (!ok) {
-          console.log(chalk.gray("  Cancelado."));
+          console.log(chalk.gray("\n  🚫 Operación cancelada. Puedes elegir 'small' para resultados más rápidos.\n"));
           await pause();
           break;
         }
@@ -211,17 +223,16 @@ async function songActionMenu(audioPath, currentFolder) {
     }
 
     case "gen_medium": {
-      // Llegamos aquí solo si la canción no tenía letras y se eligió medium directamente
       const { confirmMedium } = await inquirer.prompt([{
         type: "confirm",
         name: "confirmMedium",
-        message: chalk.yellow("⚠️  El modelo 'medium' puede tardar 10-15 minutos en CPU para una canción de 3 min.\n  ¿Continuar de todas formas?"),
+        message: chalk.yellow(`⚠️  'medium' puede tardar entre 5 y 15 minutos dependiendo de tu PC. ¿Deseas continuar?`),
         default: false,
       }]);
       if (confirmMedium) {
         await generateLrc(audioPath, "medium", "es");
       } else {
-        console.log(chalk.gray("  Cancelado. Elige 'small' para una opción más rápida."));
+        console.log(chalk.gray("\n  🚫 Operación cancelada. Puedes elegir 'small' para resultados más rápidos.\n"));
       }
       await pause();
       break;
@@ -230,8 +241,11 @@ async function songActionMenu(audioPath, currentFolder) {
     case "view": {
       const lrcPath = getLrcPath(audioPath);
       const content = fs.readFileSync(lrcPath, "utf-8");
-      console.log(chalk.cyan(`\n📄 ${path.basename(lrcPath)}:\n`));
+      console.log("");
+      console.log(chalk.cyan(`  📝 Contenido de: ${chalk.white(path.basename(lrcPath))}`));
+      console.log(chalk.cyan("  ──────────────────────────────────────────────────"));
       console.log(chalk.gray(content));
+      console.log(chalk.cyan("  ──────────────────────────────────────────────────"));
       await pause();
       break;
     }
@@ -246,7 +260,7 @@ function pause() {
   return inquirer.prompt([{
     type: "input",
     name: "_",
-    message: chalk.gray("Presiona Enter para continuar..."),
+    message: chalk.gray("👉 Presiona Enter para volver al menú..."),
   }]);
 }
 
@@ -255,13 +269,14 @@ async function chooseFolderMenu(currentFolder) {
   const { folder } = await inquirer.prompt([{
     type: "input",
     name: "folder",
-    message: "📁 Ruta de la carpeta de música:",
+    message: "📂 Escribe la ruta de tu carpeta de música:",
     default: currentFolder,
   }]);
 
   const folderPath = folder.trim().replace(/^"|"$/g, ""); // quitar comillas si el usuario las pone
   if (!fs.existsSync(folderPath)) {
-    console.log(chalk.red(`❌ La carpeta no existe: ${folderPath}`));
+    console.log(chalk.red(`\n  ❌ Esa carpeta no existe: ${folderPath}`));
+    console.log(chalk.gray(`     Verifica que la ruta esté bien escrita.\n`));
     return currentFolder;
   }
   return folderPath;
@@ -272,7 +287,8 @@ async function batchGenerateMenu(audioFiles) {
   const withoutLrc = audioFiles.filter(f => !hasLrc(f));
 
   if (withoutLrc.length === 0) {
-    console.log(chalk.green("\n✅ ¡Todas las canciones ya tienen letras generadas!\n"));
+    console.log(chalk.green("\n  ✅ ¡Todas tus canciones ya tienen letras generadas!"));
+    console.log(chalk.gray("     No hay nada pendiente por procesar.\n"));
     await pause();
     return;
   }
@@ -286,42 +302,54 @@ async function batchGenerateMenu(audioFiles) {
   const { selected } = await inquirer.prompt([{
     type: "checkbox",
     name: "selected",
-    message: `Selecciona canciones a procesar (${withoutLrc.length} sin letras):`,
+    message: `Marca las canciones que deseas procesar (${withoutLrc.length} pendientes):`,
     choices,
     pageSize: 15,
   }]);
 
   if (selected.length === 0) {
-    console.log(chalk.yellow("\n⚠️  No seleccionaste ninguna canción.\n"));
+    console.log(chalk.yellow("\n  ⚠️  No marcaste ninguna canción. Usa [Espacio] para seleccionar.\n"));
     return;
   }
 
   const { model } = await inquirer.prompt([{
     type: "list",
     name: "model",
-    message: "¿Qué modelo usar para todas?",
+    message: "Elige la calidad de transcripción para el lote:",
     choices: [
-      { name: "small   — ~1 min aprox/canción  · buena precisión - rapido (recomendado)", value: "small" },
-      { name: "base    — ~25 seg aprox/canción · precisión media - lento", value: "base" },
-      { name: "medium  — ~10-15 min aprox/canción · más preciso - demasiado lento", value: "medium" },
+      { name: "base   - Rapido (~25 seg)     - Precision media  - Para pruebas rapidas", value: "base" },
+      { name: "small  - Normal (~1 min)      - Buena precision - Recomendado", value: "small" },
+      { name: "medium - Lento  (~5-15 min)   - Alta precision  - Requiere buen CPU/GPU", value: "medium" },
+      new inquirer.Separator(),
+      { name: chalk.gray("← Volver sin procesar"), value: "__back__" },
     ],
     default: "small",
   }]);
 
+  if (model === "__back__") return;
+
   if (model === "medium") {
     const estMin = selected.length * 12;
-    console.log(chalk.yellow(`\n⚠️  Con el modelo 'medium' se estima ~${estMin} minutos en total para ${selected.length} canción(es). Ten paciencia.\n`));
+    console.log("");
+    console.log(chalk.yellow(`  ⚠️  Tiempo estimado: ~${estMin} minutos para ${selected.length} canción(es) con 'medium'.`));
+    console.log(chalk.gray(`     Esto depende de la velocidad de tu CPU/GPU. Puedes dejarlo corriendo en segundo plano.`));
   }
 
-  console.log(chalk.cyan(`\n🚀 Procesando ${selected.length} canciones con modelo '${model}'...\n`));
+  console.log("");
+  console.log(chalk.bold.cyan(`  🚀 Iniciando procesamiento en lote...`));
+  console.log(chalk.gray(`     Modelo: ${model}  |  Canciones: ${selected.length}`));
+  console.log("");
 
   for (let i = 0; i < selected.length; i++) {
     const f = selected[i];
-    console.log(chalk.bold(`\n[${i + 1}/${selected.length}] ${formatFileName(f)}`));
+    console.log(chalk.bold.white(`\n  [🎵 ${i + 1}/${selected.length}] ${formatFileName(f)}`));
     await generateLrc(f, model, "es");
   }
 
-  console.log(chalk.bold.green(`\n🎉 ¡Listo! ${selected.length} canciones procesadas.\n`));
+  console.log("");
+  console.log(chalk.bold.green(`  🎉 ¡Procesamiento completo!`));
+  console.log(chalk.gray(`     ${selected.length} canción(es) procesada(s) con modelo '${model}'.`));
+  console.log("");
   await pause();
 }
 
@@ -330,7 +358,11 @@ async function songListMenu(folderPath) {
   const audioFiles = scanFolder(folderPath);
 
   if (audioFiles.length === 0) {
-    console.log(chalk.yellow(`\n⚠️  No se encontraron archivos de audio en:\n   ${folderPath}\n`));
+    console.log("");
+    console.log(chalk.yellow(`  ⚠️  No se encontraron archivos de audio en esta carpeta:`));
+    console.log(chalk.gray(`     ${folderPath}`));
+    console.log(chalk.gray(`     Formatos soportados: mp3, wav, m4a, flac, ogg, aac, mp4, mkv, webm`));
+    console.log("");
     await pause();
     return folderPath;
   }
@@ -346,9 +378,9 @@ async function songListMenu(folderPath) {
   const total = audioFiles.length;
 
   choices.push(new inquirer.Separator());
-  choices.push({ name: chalk.cyan(`🤖 Generar letras en lote (${total - generated} pendientes)`), value: "__batch__" });
-  choices.push({ name: chalk.gray("📁 Cambiar carpeta de música"), value: "__folder__" });
-  choices.push({ name: chalk.gray("❌ Salir"), value: "__exit__" });
+  choices.push({ name: chalk.cyan(`🤖 Procesar en lote (${total - generated} sin letras)`), value: "__batch__" });
+  choices.push({ name: chalk.gray("📂 Cambiar carpeta de música"), value: "__folder__" });
+  choices.push({ name: chalk.gray("🚪 Salir de LyricSync"), value: "__exit__" });
 
   printBanner();
   console.log(chalk.gray(`  📁 Carpeta: ${folderPath}`));
@@ -357,7 +389,7 @@ async function songListMenu(folderPath) {
   const { selected } = await inquirer.prompt([{
     type: "list",
     name: "selected",
-    message: "Selecciona una canción (↑↓ para navegar, Enter para elegir):",
+    message: "Elige una canción  (↑↓ navegar · Enter seleccionar):",
     choices,
     pageSize: 18,
   }]);
@@ -386,7 +418,9 @@ async function main() {
     const result = await songListMenu(currentFolder);
 
     if (result === null) {
-      console.log(chalk.green("\n👋 ¡Hasta luego! LyricSync cerrado.\n"));
+      console.log("");
+      console.log(chalk.cyan("  👋 ¡Gracias por usar LyricSync! Hasta la próxima."));
+      console.log("");
       process.exit(0);
     }
 
@@ -400,7 +434,7 @@ async function main() {
 
 main().catch((err) => {
   if (err.isTtyError || err.message?.includes("force closed")) {
-    console.log(chalk.green("\n\n👋 LyricSync cerrado.\n"));
+    console.log(chalk.cyan("\n\n  👋 LyricSync cerrado.\n"));
     process.exit(0);
   }
   console.error(chalk.red(`\nError: ${err.message}`));
