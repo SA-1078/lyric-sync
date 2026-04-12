@@ -1,5 +1,6 @@
 # LyricSync — Dependencias de Python
 # Instalar con: pip install -r requirements.txt
 
-openai-whisper    # Motor de transcripción IA (offline)
-rapidfuzz         # Fuzzy matching para post-procesador de letras
+stable-ts         # Wrapper de Whisper (Alineamiento maestro de palabras y VAD)
+openai-whisper    # Motor IA base de transcripción (modelos se descargan 1 vez, corren offline)
+rapidfuzz         # Fuzzy matching para limpieza y post-procesado

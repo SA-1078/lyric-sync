@@ -1,6 +1,6 @@
-# 🎵 LyricSync — Reproductor de Letras Sincronizadas (Offline)
+# 🎵 LyricSync — Reproductor de Letras Sincronizadas (Totalmente Offline)
 
-Software 100% offline que genera letras de canciones sincronizadas automáticamente usando IA (Whisper) y las reproduce en la terminal al ritmo de la música.
+Software **100% local y offline** que genera letras de canciones sincronizadas automáticamente usando IA (ecosistema Whisper avanzado) y las reproduce en la terminal al ritmo de la música. Todo se procesa en tu propio ordenador: *Nada se sube a internet, no existen servidores externos, ni se requieren APIs después de configurar los modelos.*
 
 ---
 
@@ -54,15 +54,16 @@ Esto instala automáticamente:
 ### 3. Instalar dependencias de Python
 
 ```bash
-pip install openai-whisper rapidfuzz
+pip install stable-ts openai-whisper rapidfuzz
 ```
 
 | Paquete | Tamaño | Para qué |
 |---------|--------|----------|
-| `openai-whisper` | ~3 MB + modelo | Motor de IA de transcripción (local, offline) |
-| `rapidfuzz` | ~1.5 MB | Comparación fuzzy de texto para limpiar duplicados |
+| `stable-ts` | ~2 MB | Wrapper para Whisper que aniquila alucinaciones mediante VAD (detector de voz) y aumenta drásticamente la sincronía aislandola palabra-por-palabra. |
+| `openai-whisper` | ~3 MB + modelo | Motor de IA de transcripción vocal (procesamiento 100% offline de la forma de onda). |
+| `rapidfuzz` | ~1.5 MB | Algoritmo de comparación fuzzy para limpiar duplicados en el código. |
 
-> ⚠️ **Nota:** La primera vez que generes letras, Whisper descargará el modelo de IA automáticamente (~461 MB para `small`). Solo se descarga una vez.
+> ⚠️ **Nota:** La primera vez que generes letras, se descargarán una única vez los modelos de IA localmente (~461 MB para `small` de Whisper, y un detector VAD hiper-ligero). A partir de allí, puedes usar la app **incluso sin conexión a internet o WiFi.**
 
 ### 4. Instalar FFmpeg (si no lo tienes)
 
