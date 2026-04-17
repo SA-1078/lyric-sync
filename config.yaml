@@ -1,0 +1,51 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# LyricSync — Configuración Central
+# ══════════════════════════════════════════════════════════════════════════════
+# Edita este archivo para personalizar el comportamiento del sistema.
+# Los cambios surten efecto en la próxima ejecución.
+
+# ─── Motor Whisper IA ─────────────────────────────────────────────────────────
+whisper:
+  default_model: "small"          # tiny | base | small | medium | large
+  default_language: "es"          # es, en, pt, fr, it, de  ("auto" para detectar)
+  beam_size: 8                    # Mayor = más preciso pero más lento (default: 5)
+  temperature: [0.0, 0.1, 0.2, 0.4]  # Escala de fallback (más conservadora = menos alucinaciones)
+  no_speech_threshold: 0.55       # Sensibilidad a voces suaves (menor = más sensible)
+  compression_ratio_threshold: 2.8  # Tolerancia a letras repetitivas (coros, cumbias)
+  word_timestamps: true           # Obligatorio para stable-ts DTW
+  condition_on_previous_text: false  # Desactivar para evitar loops
+  vad: false                      # VAD confunde voces cantadas con ruido
+  adjust_by_silence: true         # Post-realineamiento por silencios del audio
+
+# ─── Post-procesamiento ──────────────────────────────────────────────────────
+postprocess:
+  similarity_threshold: 85        # 0-100: umbral para considerar duplicados fuzzy
+  min_chars: 2                    # Líneas con menos caracteres se eliminan
+  loop_window: 5                  # Segmentos a analizar para detectar loops
+  max_segment_duration: 30        # Segmentos >N segundos con poco texto = sospechosos
+
+# ─── API Local (FastAPI) ──────────────────────────────────────────────────────
+api:
+  host: "127.0.0.1"
+  port: 8642
+  auto_start: false               # false = iniciar manualmente con: npm run api
+
+# ─── Procesamiento Batch ──────────────────────────────────────────────────────
+batch:
+  max_workers: 2                  # Procesos paralelos (2-4 recomendado según CPU)
+
+# ─── FFmpeg ───────────────────────────────────────────────────────────────────
+ffmpeg:
+  use_bundled: true               # true = buscar primero en bin/, false = solo PATH
+  bundled_path: "bin"             # Carpeta donde están los ejecutables bundled
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level: "INFO"                   # DEBUG | INFO | WARN | ERROR
+  to_file: true                   # Guardar logs en archivo
+  log_dir: "logs"                 # Carpeta de logs
+
+# ─── Rutas ────────────────────────────────────────────────────────────────────
+paths:
+  lrc_output: "lrc"               # Carpeta donde se guardan los .lrc generados
+  music_folder: ""                # Vacío = usar carpeta Music del sistema

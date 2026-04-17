@@ -10,11 +10,18 @@ const { parseLRC } = require("./lrc-parser");
 const AudioManager = require("./audio");
 const { render, resetRenderer, SAFE_MODE } = require("./renderer");
 const { setupKeyboard } = require("./keyboard");
+const { resolveFFprobe } = require("./ffmpeg-resolver");
+const { createLogger } = require("./logger");
+
+const log = createLogger("player");
 
 function getExactAudioDuration(filePath, systemEnv) {
+  const ffprobeBin = resolveFFprobe();
+  if (!ffprobeBin) return null;
+
   try {
     const raw = execSync(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`,
+      `"${ffprobeBin}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`,
       { env: systemEnv, encoding: "utf-8" }
     ).trim();
     const duration = parseFloat(raw);
@@ -143,7 +150,11 @@ function startPlayer(audioFile, lrcFile, systemEnv) {
 
   // ─── Acciones del reproductor ────────────────────────────────
   function togglePause() {
-    if (state.finished || state.exiting) return;
+    if (state.exiting) return;
+    if (state.finished) {
+      exit();
+      return;
+    }
 
     if (state.playing) {
       // Pausar: guardar posición actual y matar ffplay
@@ -235,6 +246,7 @@ function startPlayer(audioFile, lrcFile, systemEnv) {
   // Configurar teclado
   cleanupKbd = setupKeyboard({
     onExit:         exit,
+    onEnter:        () => { if (state.finished) exit(); },
     onTogglePause:  togglePause,
     onSeekForward:  () => seek(10),
     onSeekBackward: () => seek(-10),

@@ -11,6 +11,10 @@
  */
 
 const { spawn, execSync } = require("child_process");
+const { resolveFFplay } = require("./ffmpeg-resolver");
+const { createLogger } = require("./logger");
+
+const log = createLogger("audio");
 
 class AudioManager {
   /**
@@ -40,12 +44,18 @@ class AudioManager {
     this.generation++;
     const gen = this.generation;
 
+    const ffplayBin = resolveFFplay();
+    if (!ffplayBin) {
+      log.error("ffplay no encontrado — no se puede reproducir audio");
+      return;
+    }
+
     const args = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", String(volume), "-i", this.audioFile];
     if (position > 0.5) {
       args.push("-ss", String(position.toFixed(2)));
     }
 
-    this.process = spawn("ffplay", args, {
+    this.process = spawn(ffplayBin, args, {
       stdio: ["pipe", "ignore", "ignore"],
       env: this.systemEnv,
     });

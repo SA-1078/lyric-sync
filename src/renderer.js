@@ -173,6 +173,7 @@ function render(state) {
   // ─── Controles ─────────────────────────────────────────────
   if (finished) {
     lines.push(chalk.bold.green("  ✅ ¡Canción terminada!"));
+    lines.push(chalk.gray("     👉 Pulsa [Enter] o [Espacio] para volver al menú principal..."));
     lines.push(chalk.cyan("  " + "─".repeat(innerWidth + 2)));
   } else {
     const footerStr = playing 

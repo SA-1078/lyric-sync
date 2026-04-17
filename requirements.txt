@@ -4,3 +4,6 @@
 stable-ts         # Wrapper de Whisper (Alineamiento maestro de palabras y VAD)
 openai-whisper    # Motor IA base de transcripción (modelos se descargan 1 vez, corren offline)
 rapidfuzz         # Fuzzy matching para limpieza y post-procesado
+pyyaml            # Lectura de config.yaml
+fastapi           # API local (microservicio HTTP)
+uvicorn[standard] # Servidor ASGI para FastAPI

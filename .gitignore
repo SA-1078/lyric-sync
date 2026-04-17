@@ -7,3 +7,6 @@ node_modules/
 lrc/
 .gitignore
 __pycache__/
+bin/
+logs/
+_temp_lyrics.txt

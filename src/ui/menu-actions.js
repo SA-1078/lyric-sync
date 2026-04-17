@@ -13,6 +13,9 @@ const {
 } = require("../config");
 
 const { startPlayer } = require("../player");
+const { LyricSyncAPI } = require("../api-client");
+const { BatchProcessor } = require("../batch-worker");
+const { createLogger } = require("../logger");
 
 // ─── Básicos ────────────────────────────────────────────────────────────────
 function pause() {
@@ -23,12 +26,28 @@ function pause() {
   }]);
 }
 
-// ─── Generación de LRC (Whisper) ─────────────────────────────────────────────
+// ─── Generación de LRC (Whisper) — con fallback híbrido API/spawn ─────────────
 async function generateLrc(audioPath, model = "small", language = "es") {
   const lrcPath = getLrcPath(audioPath);
 
-  // Como invocamos "whisper_transcribe.py", está en la raíz del proyecto
-  // (un directorio arriba del src/)
+  // Intentar API primero (si está corriendo)
+  const api = new LyricSyncAPI();
+  if (await api.isRunning()) {
+    console.log(chalk.cyan("\n  🌐 Usando API local para transcripción..."));
+    try {
+      const { task_id } = await api.transcribe(audioPath, model, language);
+      const result = await api.waitForCompletion(task_id, (status, progress) => {
+        process.stdout.write(`\r  ⏳ Estado: ${status} (${progress}%)   `);
+      });
+      console.log(chalk.bold.green(`\n\n   ✅  OPERACIÓN EXITOSA: Archivo de letras generado en formato LRC`));
+      console.log(chalk.gray(`     Directorio de archivo generado: lrc/${path.basename(lrcPath)}`));
+      return true;
+    } catch (err) {
+      console.log(chalk.yellow(`\n  ⚠️  Error con API: ${err.message}. Usando fallback directo...`));
+    }
+  }
+
+  // Fallback: spawn directo de Python
   const scriptPath = path.join(__dirname, "..", "..", "whisper_transcribe.py");
 
   return new Promise((resolve) => {
@@ -60,6 +79,94 @@ async function generateLrc(audioPath, model = "small", language = "es") {
   });
 }
 
+// ─── Forced Alignment (sincronizar con letra existente) ─────────────────
+async function alignLyrics(audioPath) {
+  const lrcPath = getLrcPath(audioPath);
+
+  const { lyricsSource } = await inquirer.prompt([{
+    type: "list",
+    name: "lyricsSource",
+    message: chalk.magenta("¿Cómo quieres proporcionar la letra?"),
+    choices: [
+      { name: chalk.cyan("   📄 Desde un archivo .txt"), value: "file" },
+      { name: chalk.cyan("   ⌨️  Escribir/pegar en consola"), value: "input" },
+      new inquirer.Separator(),
+      { name: chalk.gray("   ← Volver"), value: "back" },
+    ],
+  }]);
+
+  if (lyricsSource === "back") return;
+
+  let lyricsText = "";
+
+  if (lyricsSource === "file") {
+    const { txtPath } = await inquirer.prompt([{
+      type: "input",
+      name: "txtPath",
+      message: "Ruta al archivo .txt con la letra:",
+    }]);
+
+    const cleanPath = txtPath.trim().replace(/^"|"$/g, "");
+    if (!fs.existsSync(cleanPath)) {
+      console.log(chalk.red(`\n  ❌ No se encontró el archivo: ${cleanPath}\n`));
+      return;
+    }
+    lyricsText = fs.readFileSync(cleanPath, "utf-8");
+  } else {
+    console.log(chalk.gray("\n  Pega la letra línea por línea. Escribe 'FIN' en una línea sola para terminar:\n"));
+    const lines = [];
+    while (true) {
+      const { line } = await inquirer.prompt([{
+        type: "input",
+        name: "line",
+        message: chalk.gray("  >"),
+      }]);
+      if (line.trim().toUpperCase() === "FIN") break;
+      lines.push(line);
+    }
+    lyricsText = lines.join("\n");
+  }
+
+  if (!lyricsText.trim()) {
+    console.log(chalk.yellow("\n  ⚠️  La letra está vacía. Operación cancelada.\n"));
+    return;
+  }
+
+  console.log(chalk.cyan(`\n  🎯 Forced Alignment: sincronizando ${lyricsText.split("\n").length} líneas...\n`));
+
+  const scriptPath = path.join(__dirname, "..", "..", "whisper_align.py");
+
+  // Guardar letra en archivo temporal
+  const tempTxt = path.join(__dirname, "..", "..", "_temp_lyrics.txt");
+  fs.writeFileSync(tempTxt, lyricsText, "utf-8");
+
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "python",
+      [scriptPath, audioPath, "--lyrics", tempTxt, "--output", lrcPath, "--language", "es"],
+      { stdio: "inherit", env: SYSTEM_ENV }
+    );
+
+    proc.on("close", (code) => {
+      // Limpiar temporal
+      try { fs.unlinkSync(tempTxt); } catch {}
+
+      if (code === 0) {
+        console.log(chalk.bold.green(`\n   ✅ Alineación completada: lrc/${path.basename(lrcPath)}`));
+      } else {
+        console.log(chalk.bold.red(`\n  ❌ Error durante la alineación (código: ${code})`));
+      }
+      resolve(code === 0);
+    });
+
+    proc.on("error", () => {
+      try { fs.unlinkSync(tempTxt); } catch {}
+      console.error(chalk.red("\n  ❌ No se pudo ejecutar Python."));
+      resolve(false);
+    });
+  });
+}
+
 // ─── Reproducir Canción (In Process) ─────────────────────────────────────────
 async function playSong(audioPath) {
   const lrcPath = getLrcPath(audioPath);
@@ -77,7 +184,7 @@ async function playSong(audioPath) {
   await startPlayer(audioPath, lrcPath, SYSTEM_ENV);
 }
 
-// ─── Iterador Batch ────────────────────────────────────────────────────────
+// ─── Iterador Batch (paralelo) ────────────────────────────────────────
 async function batchGenerateMenu(audioFiles) {
   const withoutLrc = audioFiles.filter(f => !hasLrc(f));
 
@@ -123,6 +230,17 @@ async function batchGenerateMenu(audioFiles) {
 
   if (model === "__back__") return;
 
+  // Leer max_workers de config
+  let maxWorkers = 2;
+  try {
+    const yaml = require("js-yaml");
+    const configPath = path.join(__dirname, "..", "..", "config.yaml");
+    if (fs.existsSync(configPath)) {
+      const cfg = yaml.load(fs.readFileSync(configPath, "utf-8"));
+      maxWorkers = (cfg && cfg.batch && cfg.batch.max_workers) || 2;
+    }
+  } catch {}
+
   if (model === "medium") {
     const estMin = selected.length * 12;
     console.log("");
@@ -132,18 +250,31 @@ async function batchGenerateMenu(audioFiles) {
 
   console.log("");
   console.log(chalk.bold.cyan(`  🚀 Iniciando procesamiento en lote...`));
-  console.log(chalk.gray(`     Modelo: ${model}  |  Canciones: ${selected.length}`));
+  console.log(chalk.gray(`     Modelo: ${model}  |  Canciones: ${selected.length}  |  Workers: ${maxWorkers}`));
   console.log("");
 
-  for (let i = 0; i < selected.length; i++) {
-    const f = selected[i];
-    console.log(chalk.bold.white(`\n  [🎵 ${i + 1}/${selected.length}] ${formatFileName(f)}`));
-    await generateLrc(f, model, "es");
+  // Usar BatchProcessor para paralelismo
+  const batch = new BatchProcessor(maxWorkers, SYSTEM_ENV);
+  for (const f of selected) {
+    batch.addTask({
+      audioPath: f,
+      outputPath: getLrcPath(f),
+      model,
+      language: "es",
+    });
   }
+
+  const results = await batch.processAll((idx, total, fileName, status, detail) => {
+    const icon = status === "done" ? "✅" : status === "error" ? "❌" : "⏳";
+    console.log(chalk.white(`  [${icon} ${idx}/${total}] ${fileName} — ${status} ${detail}`));
+  });
+
+  const successes = results.filter(r => r.success).length;
+  const failures = results.filter(r => !r.success).length;
 
   console.log("");
   console.log(chalk.bold.green(`  🎉 ¡Procesamiento completo!`));
-  console.log(chalk.gray(`     ${selected.length} canción(es) procesada(s) con modelo '${model}'.`));
+  console.log(chalk.gray(`     ${successes} exitosa(s), ${failures} fallida(s) con modelo '${model}'.`));
   console.log("");
   await pause();
 }
@@ -178,11 +309,13 @@ async function songActionMenu(audioPath, currentFolder) {
   const choices = [];
 
   if (lrcExists) {
-    choices.push({ name: chalk.green("   ▶️  Iniciar Reproductor Interactivo"), value: "play" });
-    choices.push({ name: chalk.yellow("   🔄 Sobreescribir Letra (Regenerar track)"), value: "regen" });
-    choices.push({ name: chalk.cyan("   📝 Inspeccionar archivo de letras (.lrc)"), value: "view" });
+    choices.push({ name: chalk.green("   \u25b6\ufe0f  Iniciar Reproductor Interactivo"), value: "play" });
+    choices.push({ name: chalk.yellow("   \ud83d\udd04 Sobreescribir Letra (Regenerar track)"), value: "regen" });
+    choices.push({ name: chalk.blue("   \ud83c\udfaf Sincronizar con letra existente (Forced Alignment)"), value: "align" });
+    choices.push({ name: chalk.cyan("   \ud83d\udcdd Inspeccionar archivo de letras (.lrc)"), value: "view" });
   } else {
-    choices.push({ name: chalk.magenta.bold("   🤖 Escanear y Transcribir con IA Whisper"), value: "gen_small" });
+    choices.push({ name: chalk.magenta.bold("   \ud83e\udd16 Escanear y Transcribir con IA Whisper"), value: "gen_small" });
+    choices.push({ name: chalk.blue("   \ud83c\udfaf Sincronizar con letra existente (Forced Alignment)"), value: "align" });
   }
 
   choices.push(new inquirer.Separator(" "));
@@ -250,6 +383,11 @@ async function songActionMenu(audioPath, currentFolder) {
       break;
     }
 
+    case "align":
+      await alignLyrics(audioPath);
+      await pause();
+      break;
+
     case "back":
     default:
       break;
@@ -259,6 +397,7 @@ async function songActionMenu(audioPath, currentFolder) {
 module.exports = {
   pause,
   generateLrc,
+  alignLyrics,
   playSong,
   batchGenerateMenu,
   songActionMenu,

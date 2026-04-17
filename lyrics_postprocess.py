@@ -8,6 +8,10 @@ Corrige problemas comunes:
   3. Patrones de alucinación conocidos de Whisper
   4. Líneas demasiado cortas o sin sentido
   5. Segmentos que se repiten en bucle
+  6. Normalización de etiquetas musicales (♪, music, etc.)
+  7. Líneas incompletas/cortadas → merge con siguiente
+  8. Corrección semántica fuzzy contra repeticiones previas
+  9. Gaps grandes sin voz → insertar (instrumental)
 
 Uso standalone:
   python lyrics_postprocess.py input.lrc --output output_clean.lrc
@@ -124,6 +128,175 @@ def clean_intra_repetition(text: str) -> str:
     return text
 
 
+def normalize_music_tags(text: str) -> str:
+    """
+    Normaliza cualquier etiqueta musical a un formato consistente.
+    Detecta patrones reales que Whisper produce:
+      "Music"  → "(música)"
+      "♪"      → "(música)"
+      "♪♪♪"   → "(música)"
+      "música" → "(música)"
+    """
+    stripped = text.strip()
+    lower = stripped.lower()
+
+    # Detectar patrones reales de etiquetas musicales
+    if any(tag in lower for tag in ["music", "música", "musica"]):
+        return "(música)"
+    if re.match(r'^[♪♫🎵🎶\s\-–—\.]+$', stripped):
+        return "(música)"
+
+    return text
+
+
+def merge_short_lines(segments: list, min_words: int = 3, max_gap: float = 2.0) -> list:
+    """
+    Fusiona líneas incompletas/cortadas con la siguiente.
+    Ejemplo:
+      [01:47.00] "Eres mi"           (2 palabras, corta)
+      [01:50.88] "Y la estrella..."   → se fusiona
+      Resultado: [01:47.00] "Eres mi / Y la estrella..."
+
+    Solo fusiona si:
+    - La línea actual tiene < min_words palabras
+    - El gap temporal con la siguiente es < max_gap segundos
+    - La línea NO es una etiqueta (música), (instrumental), etc.
+    """
+    if len(segments) < 2:
+        return segments
+
+    merged = []
+    skip_next = False
+
+    for i in range(len(segments)):
+        if skip_next:
+            skip_next = False
+            continue
+
+        seg = segments[i]
+        text = seg["text"].strip()
+        word_count = len(text.split())
+
+        # No fusionar etiquetas
+        if re.match(r'^\(.*\)$', text):
+            merged.append(seg)
+            continue
+
+        # Línea corta + hay siguiente segmento
+        if word_count < min_words and i + 1 < len(segments):
+            next_seg = segments[i + 1]
+            gap = next_seg.get("start", 0) - seg.get("end", seg.get("start", 0))
+
+            # Solo fusionar si el gap es pequeño (forman parte de la misma frase)
+            if gap < max_gap:
+                # Limpiar puntuación final del fragmento corto para evitar ", ,"
+                clean_tail = text.rstrip(" ,;.")
+                merged_seg = {
+                    "start": seg["start"],
+                    "end": next_seg.get("end", next_seg.get("start", 0)),
+                    "text": f"{clean_tail}, {next_seg['text'].strip()}",
+                }
+                # Copiar avg_logprob si existe (usar el peor de los dos)
+                if "avg_logprob" in seg or "avg_logprob" in next_seg:
+                    merged_seg["avg_logprob"] = min(
+                        seg.get("avg_logprob", 0),
+                        next_seg.get("avg_logprob", 0)
+                    )
+                merged.append(merged_seg)
+                skip_next = True
+                continue
+
+        merged.append(seg)
+
+    return merged
+
+
+def fix_semantic_errors(segments: list, similarity_floor: int = 60, similarity_ceil: int = 84) -> list:
+    """
+    Corrige errores semánticos por comparación con repeticiones previas.
+
+    Si un segmento es "parecido pero no idéntico" a uno anterior (60-84% similar),
+    probablemente Whisper transcribió mal una palabra en una frase que se repite
+    (ej: "huerta" en vez de "alma" en "quiero ser tu alma, tu corazón").
+
+    En ese caso, usa la versión con mayor confianza (avg_logprob más alto).
+    Si no hay logprob, usa la primera aparición (normalmente más confiable).
+    """
+    if len(segments) < 2:
+        return segments
+
+    corrected = 0
+
+    for i in range(1, len(segments)):
+        current = segments[i]
+        current_norm = normalize_text(current["text"])
+        if not current_norm or len(current_norm.split()) < 4:
+            continue  # Líneas muy cortas no aplican
+
+        # Buscar en segmentos anteriores (no adyacentes) una versión similar
+        for j in range(max(0, i - 30), i):
+            prev = segments[j]
+            prev_norm = normalize_text(prev["text"])
+            if not prev_norm or len(prev_norm.split()) < 4:
+                continue
+
+            ratio = fuzz.ratio(current_norm, prev_norm)
+
+            # Rango "parecido pero no duplicado" → probable error de transcripción
+            if similarity_floor <= ratio <= similarity_ceil:
+                # Determinar cuál versión es mejor
+                conf_current = current.get("avg_logprob", -1.0)
+                conf_prev = prev.get("avg_logprob", -0.5)  # bias hacia la primera
+
+                if conf_prev > conf_current:
+                    # La versión anterior es más confiable → corregir la actual
+                    current["text"] = prev["text"]
+                    corrected += 1
+                break  # Solo comparar con la mejor coincidencia
+
+    return segments
+
+
+def insert_instrumental_gaps(segments: list, min_gap: float = 10.0) -> list:
+    """
+    Detecta gaps de silencio/instrumental >min_gap segundos entre segmentos
+    e inserta una etiqueta "(instrumental)".
+
+    Ejemplo:
+      [00:48.68] "Amor chiquita"
+      ← gap de 28 segundos sin voz →
+      [01:16.56] "Con la unidad de siempre"
+
+    Resultado:
+      [00:48.68] "Amor chiquita"
+      [00:53.68] "(instrumental)"
+      [01:16.56] "Con la unidad de siempre"
+    """
+    if len(segments) < 2:
+        return segments
+
+    result = []
+
+    for i in range(len(segments)):
+        result.append(segments[i])
+
+        if i + 1 < len(segments):
+            end_current = segments[i].get("end", segments[i].get("start", 0))
+            start_next = segments[i + 1].get("start", 0)
+            gap = start_next - end_current
+
+            if gap >= min_gap:
+                # Insertar etiqueta instrumental en medio del gap
+                instrumental_start = end_current + 2.0  # 2s después del último segmento
+                result.append({
+                    "start": instrumental_start,
+                    "end": start_next - 1.0,
+                    "text": "(instrumental)",
+                })
+
+    return result
+
+
 def is_near_duplicate(text_a: str, text_b: str, threshold: int = 85) -> bool:
     """
     Compara dos textos usando fuzzy matching.
@@ -142,6 +315,36 @@ def is_near_duplicate(text_a: str, text_b: str, threshold: int = 85) -> bool:
     # Fuzzy matching — detecta "casi iguales"
     ratio = fuzz.ratio(norm_a, norm_b)
     return ratio >= threshold
+
+
+def is_legitimate_repetition(seg_a: dict, seg_b: dict) -> bool:
+    """
+    Determina si dos segmentos idénticos/similares son una repetición
+    musical legítima (coro, estribillo, frase repetida) vs una alucinación.
+
+    Criterios:
+    - Gap temporal razonable entre repeticiones (>1s sugiere que es cantada de nuevo)
+    - Ambos segmentos tienen duración razonable (>1.5s cada uno)
+    """
+    start_a = seg_a.get("start", 0)
+    end_a = seg_a.get("end", start_a)
+    start_b = seg_b.get("start", 0)
+    end_b = seg_b.get("end", start_b)
+
+    time_gap = start_b - end_a
+    duration_a = end_a - start_a
+    duration_b = end_b - start_b
+
+    # Gap temporal razonable entre repeticiones (>1s sugiere que es canto real)
+    if time_gap > 1.0:
+        return True
+
+    # Si ambos segmentos tienen duración razonable (>1.5s), es canto real
+    if duration_a > 1.5 and duration_b > 1.5:
+        return True
+
+    # Si el gap es casi nulo y las duraciones son muy cortas → alucinación
+    return False
 
 
 def detect_loop(segments: list, window: int = 4, threshold: int = 80) -> set:
@@ -228,6 +431,10 @@ def postprocess_segments(segments: list, similarity_threshold: int = 85) -> list
     removed_reasons = {
         "alucinación": 0,
         "muy_corto": 0,
+        "etiqueta_normalizada": 0,
+        "líneas_fusionadas": 0,
+        "corrección_semántica": 0,
+        "instrumental_insertado": 0,
         "repetición_interna": 0,
         "duplicado_exacto": 0,
         "duplicado_fuzzy": 0,
@@ -238,6 +445,16 @@ def postprocess_segments(segments: list, similarity_threshold: int = 85) -> list
     # Paso 1: Verificar timing
     segments = check_timing(segments)
     removed_reasons["timing"] = original_count - len(segments)
+
+    # Paso 1.2: Normalizar etiquetas musicales (♪, music, etc. → "(música)")
+    music_normalized = 0
+    for seg in segments:
+        original = seg["text"]
+        normalized = normalize_music_tags(original)
+        if normalized != original:
+            seg["text"] = normalized
+            music_normalized += 1
+    removed_reasons["etiqueta_normalizada"] = music_normalized
 
     # Paso 1.5: Limpiar repeticiones internas en cada segmento
     intra_cleaned = 0
@@ -267,6 +484,7 @@ def postprocess_segments(segments: list, similarity_threshold: int = 85) -> list
     segments = [seg for i, seg in enumerate(segments) if i not in loop_indices]
 
     # Paso 4: Eliminar duplicados consecutivos (exactos y fuzzy)
+    #         PERO mantener repeticiones musicales legítimas (frases cantadas 2 veces)
     cleaned = []
     for seg in segments:
         if not cleaned:
@@ -275,28 +493,50 @@ def postprocess_segments(segments: list, similarity_threshold: int = 85) -> list
 
         prev = cleaned[-1]
 
-        # Duplicado exacto
+        # Duplicado exacto — verificar si es repetición legítima
         if normalize_text(seg["text"]) == normalize_text(prev["text"]):
-            removed_reasons["duplicado_exacto"] += 1
+            if is_legitimate_repetition(prev, seg):
+                cleaned.append(seg)  # Mantener: repetición musical legítima
+            else:
+                removed_reasons["duplicado_exacto"] += 1
             continue
 
         # Duplicado fuzzy (casi igual, difieren en 1-2 palabras)
         if is_near_duplicate(seg["text"], prev["text"], similarity_threshold):
-            removed_reasons["duplicado_fuzzy"] += 1
+            if is_legitimate_repetition(prev, seg):
+                cleaned.append(seg)  # Mantener: repetición musical legítima
+            else:
+                removed_reasons["duplicado_fuzzy"] += 1
             continue
 
         cleaned.append(seg)
 
+    # Paso 5: Fusionar líneas cortas/incompletas con la siguiente
+    count_before_merge = len(cleaned)
+    cleaned = merge_short_lines(cleaned, min_words=3, max_gap=2.0)
+    removed_reasons["líneas_fusionadas"] = count_before_merge - len(cleaned)
+
+    # Paso 6: Corrección semántica (fuzzy contra repeticiones previas)
+    cleaned_before_semantic = [seg["text"] for seg in cleaned]
+    cleaned = fix_semantic_errors(cleaned, similarity_floor=60, similarity_ceil=84)
+    semantic_fixes = sum(1 for i, seg in enumerate(cleaned) if seg["text"] != cleaned_before_semantic[i])
+    removed_reasons["corrección_semántica"] = semantic_fixes
+
+    # Paso 7: Insertar (instrumental) en gaps grandes (>10s sin voz)
+    count_before_gaps = len(cleaned)
+    cleaned = insert_instrumental_gaps(cleaned, min_gap=10.0)
+    removed_reasons["instrumental_insertado"] = len(cleaned) - count_before_gaps
+
     # Reporte
-    total_removed = sum(removed_reasons.values())
-    if total_removed > 0:
+    total_actions = sum(removed_reasons.values())
+    if total_actions > 0:
         print(f"\n🧹 Post-procesamiento completado:")
         print(f"   Segmentos originales: {original_count}")
-        print(f"   Eliminados: {total_removed}")
+        print(f"   Acciones realizadas: {total_actions}")
         for reason, count in removed_reasons.items():
             if count > 0:
                 print(f"     ├─ {reason}: {count}")
-        print(f"   Resultado final: {len(cleaned)} segmentos limpios")
+        print(f"   Resultado final: {len(cleaned)} segmentos")
     else:
         print(f"\n✨ Post-procesamiento: sin cambios necesarios ({len(cleaned)} segmentos)")
 

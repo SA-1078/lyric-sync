@@ -47,6 +47,12 @@ function setupKeyboard(handlers) {
       return;
     }
 
+    // Enter / Return
+    if (key.name === "return" || key.name === "enter") {
+      if (handlers.onEnter) handlers.onEnter();
+      return;
+    }
+
     // Espacio — pausar/reanudar
     if (key.name === "space") {
       handlers.onTogglePause();
