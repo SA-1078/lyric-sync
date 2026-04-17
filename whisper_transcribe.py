@@ -39,6 +39,28 @@ def detect_device() -> tuple[str, str]:
         return "cuda", name
     return "cpu", "CPU"
 
+
+def is_model_downloaded(model_name: str) -> bool:
+    """Verifica si el modelo Whisper ya está en la caché local."""
+    import importlib
+    download_root = os.getenv(
+        "XDG_CACHE_HOME", 
+        os.path.join(os.path.expanduser("~"), ".cache", "whisper")
+    )
+    
+    try:
+        openai_whisper = importlib.import_module("whisper")
+        url = openai_whisper._MODELS.get(model_name)
+    except Exception:
+        return False
+        
+    if not url:
+        return False
+        
+    expected_filename = url.split("/")[-1]
+    model_path = os.path.join(download_root, expected_filename)
+    return os.path.exists(model_path)
+
 from logger import get_logger
 from lyric_config import get_config
 
@@ -263,6 +285,8 @@ def generate_lrc(
 
     log.info(f"Iniciando transcripción: {basename} [modelo={model_name}, lang={lang_display}, device={device}]")
     print(f"  ⏳ Cargando modelo '{model_name}' en {device.upper()}...")
+    if not is_model_downloaded(model_name):
+        print(f"     ℹ️  Parece ser la primera vez que usas este modelo. Se descargará automáticamente, espera...")
     print()
 
     model = whisper.load_model(model_name, device=device)

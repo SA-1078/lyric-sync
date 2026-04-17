@@ -72,7 +72,7 @@ async function generateLrc(audioPath, model = "small", language = "es") {
 
     proc.on("error", () => {
       console.error(chalk.red("\n  ❌ No se pudo ejecutar Python."));
-      console.error(chalk.gray("     Asegúrate de tener Python 3.9+ instalado y en el PATH."));
+      console.error(chalk.gray("     Asegúrate de tener Python 3.11 o superior instalado y en el PATH."));
       console.error(chalk.gray("     Descarga: https://www.python.org/downloads/"));
       resolve(false);
     });
@@ -149,7 +149,7 @@ async function alignLyrics(audioPath) {
 
     proc.on("close", (code) => {
       // Limpiar temporal
-      try { fs.unlinkSync(tempTxt); } catch {}
+      try { fs.unlinkSync(tempTxt); } catch { }
 
       if (code === 0) {
         console.log(chalk.bold.green(`\n   ✅ Alineación completada: lrc/${path.basename(lrcPath)}`));
@@ -160,7 +160,7 @@ async function alignLyrics(audioPath) {
     });
 
     proc.on("error", () => {
-      try { fs.unlinkSync(tempTxt); } catch {}
+      try { fs.unlinkSync(tempTxt); } catch { }
       console.error(chalk.red("\n  ❌ No se pudo ejecutar Python."));
       resolve(false);
     });
@@ -219,9 +219,11 @@ async function batchGenerateMenu(audioFiles) {
     name: "model",
     message: "Elige la calidad de transcripción para el lote:",
     choices: [
+      { name: "tiny   - Muy Rap. (~18 seg)   - Precision baja   - Muy rapido y ligero", value: "tiny" },
       { name: "base   - Rapido (~25 seg)     - Precision media  - Para pruebas rapidas", value: "base" },
-      { name: "small  - Normal (~1 min)      - Buena precision - Recomendado", value: "small" },
-      { name: "medium - Lento  (~5-15 min)   - Alta precision  - Requiere buen CPU/GPU", value: "medium" },
+      { name: "small  - Normal (~1 min)      - Buena precision  - Recomendado", value: "small" },
+      { name: "medium - Lento  (~5-15 min)   - Alta precision   - Requiere buen CPU/GPU", value: "medium" },
+      { name: "large  - Muy Lento (~30+ min) - Precision máxima - Muy lento/mucha VRAM", value: "large" },
       new inquirer.Separator(),
       { name: chalk.gray("← Volver sin procesar"), value: "__back__" },
     ],
@@ -239,12 +241,13 @@ async function batchGenerateMenu(audioFiles) {
       const cfg = yaml.load(fs.readFileSync(configPath, "utf-8"));
       maxWorkers = (cfg && cfg.batch && cfg.batch.max_workers) || 2;
     }
-  } catch {}
+  } catch { }
 
-  if (model === "medium") {
-    const estMin = selected.length * 12;
+  if (model === "medium" || model === "large") {
+    const minPerSong = model === "medium" ? 12 : 30;
+    const estMin = selected.length * minPerSong;
     console.log("");
-    console.log(chalk.yellow(`  ⚠️  Tiempo estimado: ~${estMin} minutos para ${selected.length} canción(es) con 'medium'.`));
+    console.log(chalk.yellow(`  ⚠️  Tiempo estimado: ~${estMin} minutos para ${selected.length} canción(es) con '${model}'.`));
     console.log(chalk.gray(`     Esto depende de la velocidad de tu CPU/GPU. Puedes dejarlo corriendo en segundo plano.`));
   }
 
@@ -341,9 +344,11 @@ async function songActionMenu(audioPath, currentFolder) {
         name: "chosenModel",
         message: "Elige la calidad de transcripción:",
         choices: [
-          { name: "base   - Rapido (~25 seg)     - Precision media - Para pruebas rapidas", value: "base" },
-          { name: "small  - Normal (~1 min)      - Buena precision - Recomendado", value: "small" },
-          { name: "medium - Lento  (~5-15 min)   - Alta precision  - Requiere buen CPU/GPU", value: "medium" },
+          { name: "tiny   - Muy Rap. (~18 seg)   - Precision baja   - Muy rapido y ligero", value: "tiny" },
+          { name: "base   - Rapido (~25 seg)     - Precision media  - Para pruebas rapidas", value: "base" },
+          { name: "small  - Normal (~1 min)      - Buena precision  - Recomendado", value: "small" },
+          { name: "medium - Lento  (~5-15 min)   - Alta precision   - Requiere buen CPU/GPU", value: "medium" },
+          { name: "large  - Muy Lento (~30+ min) - Precision máxima - Muy lento/mucha RAM", value: "large" },
           new inquirer.Separator(),
           { name: chalk.gray("← Volver sin generar"), value: "__back__" },
         ],
@@ -352,11 +357,12 @@ async function songActionMenu(audioPath, currentFolder) {
 
       if (chosenModel === "__back__") break;
 
-      if (chosenModel === "medium") {
+      if (chosenModel === "medium" || chosenModel === "large") {
+        const estTime = chosenModel === "medium" ? "entre 5 y 15 minutos" : "más de 30 minutos";
         const { ok } = await inquirer.prompt([{
           type: "confirm",
           name: "ok",
-          message: chalk.yellow(`⚠️  'medium' puede tardar entre 5 y 15 minutos dependiendo de tu archivo y PC. ¿Deseas continuar?`),
+          message: chalk.yellow(`⚠️  '${chosenModel}' puede tardar ${estTime} dependiendo de tu archivo y PC. ¿Deseas continuar?`),
           default: false,
         }]);
         if (!ok) {

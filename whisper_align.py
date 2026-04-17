@@ -25,7 +25,7 @@ import shutil
 
 from logger import get_logger
 from lyric_config import get_config
-from whisper_transcribe import detect_device
+from whisper_transcribe import detect_device, is_model_downloaded
 
 log = get_logger("align")
 
@@ -95,7 +95,9 @@ def align_lyrics(
 
     log.info(f"Cargando modelo '{model_name}' en {device} para alineación...")
     print(f"  ⏳ Cargando modelo '{model_name}' en {device.upper()}...")
-
+    if not is_model_downloaded(model_name):
+        print(f"     ℹ️  Parece ser la primera vez que usas este modelo. Se descargará automáticamente, espera...")
+    
     model = whisper.load_model(model_name, device=device)
 
     # ── Forced Alignment ───────────────────────────────────────────────────────

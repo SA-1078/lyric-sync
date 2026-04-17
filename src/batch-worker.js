@@ -65,7 +65,9 @@ class BatchProcessor {
 
           log.info(`[${idx + 1}/${total}] Iniciando: ${fileName}`);
 
-          this._runSingleTask(task)
+          this._runSingleTask(task, (status, detail) => {
+            if (onProgress) onProgress(idx + 1, total, fileName, status, detail);
+          })
             .then(() => {
               results[idx] = { audioPath: task.audioPath, success: true };
               if (onProgress) onProgress(idx + 1, total, fileName, "done", "✅");
@@ -101,7 +103,7 @@ class BatchProcessor {
   /**
    * Ejecuta una sola tarea de transcripción como proceso Python.
    */
-  _runSingleTask(task) {
+  _runSingleTask(task, onProgressCallback = null) {
     return new Promise((resolve, reject) => {
       const scriptPath = path.join(__dirname, "..", "whisper_transcribe.py");
 
@@ -119,6 +121,17 @@ class BatchProcessor {
       });
 
       let stderr = "";
+
+      proc.stdout.on("data", (data) => {
+        const text = data.toString();
+        // Detectar si está descargando el modelo o transcribiendo por primera vez
+        if (text.includes("descargará automáticamente")) {
+          if (onProgressCallback) {
+            onProgressCallback("downloading", "⏳ Descargando modelo (puede tomar unos minutos)...");
+          }
+          log.info(`[WORKER] Descargando modelo para: ${task.audioPath}`);
+        }
+      });
 
       proc.stderr.on("data", (data) => {
         stderr += data.toString();

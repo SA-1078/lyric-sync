@@ -32,7 +32,12 @@ function getSystemPath() {
   }
 }
 
-const SYSTEM_ENV = { ...process.env, PATH: getSystemPath() };
+const SYSTEM_ENV = { 
+  ...process.env, 
+  PATH: getSystemPath(),
+  PYTHONDONTWRITEBYTECODE: "1", // Evita que Python genere la carpeta __pycache__ y archivos .pyc
+  PYTHONIOENCODING: "utf-8"     // Fuerza UTF-8 para evitar errores con caracteres especiales (especialmente en batch)
+};
 
 // ─── Utilidades ─────────────────────────────────────────────────────────────
 
