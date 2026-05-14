@@ -1,9 +1,24 @@
-# LyricSync — Dependencias de Python
-# Instalar con: pip install -r requirements.txt
+# LyricSync - Dependencias de Python
+# Instalar con: python -m pip install -r requirements.txt
+#
+# Nota:
+# - FFmpeg/ffplay/ffprobe no son paquetes de Python. Instalar con:
+#   npm run ffmpeg:install
+# - Las dependencias de la interfaz Node.js se instalan con:
+#   npm install
 
-stable-ts         # Wrapper de Whisper (Alineamiento maestro de palabras y VAD)
-openai-whisper    # Motor IA base de transcripción (modelos se descargan 1 vez, corren offline)
-rapidfuzz         # Fuzzy matching para limpieza y post-procesado
-pyyaml            # Lectura de config.yaml
-fastapi           # API local (microservicio HTTP)
-uvicorn[standard] # Servidor ASGI para FastAPI
+# IA / transcripcion offline
+stable-ts
+openai-whisper
+torch
+
+# Limpieza y post-procesado de letras
+rapidfuzz
+
+# Configuracion
+PyYAML
+
+# API local
+fastapi
+pydantic
+uvicorn[standard]

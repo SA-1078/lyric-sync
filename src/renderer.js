@@ -56,14 +56,20 @@ function truncate(str, max) {
  * Encuentra el índice de la línea de letras activa según el tiempo transcurrido.
  */
 function getCurrentLineIdx(lyrics, elapsed) {
+  let low = 0;
+  let high = lyrics.length - 1;
   let idx = -1;
-  for (let i = 0; i < lyrics.length; i++) {
-    if (elapsed >= lyrics[i].time) {
-      idx = i;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (elapsed >= lyrics[mid].time) {
+      idx = mid;
+      low = mid + 1;
     } else {
-      break;
+      high = mid - 1;
     }
   }
+
   return idx;
 }
 

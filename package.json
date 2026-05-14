@@ -1,23 +1,32 @@
 {
   "name": "lyric-sync",
-  "version": "2.0.0",
-  "description": "Reproductor de letras sincronizadas con IA offline",
+  "version": "2.1.0",
+  "description": "Reproductor de letras sincronizadas con IA offline + Visualizador ASCII",
   "main": "index.js",
   "scripts": {
-    "start":  "node index.js",
-    "menu":   "node index.js",
-    "play":   "node index.js",
-    "api":    "python api_server.py",
+    "start": "node index.js",
+    "menu": "node index.js",
+    "play": "node index.js",
+    "viz": "node index.js --viz",
+    "api": "python api_server.py",
     "ffmpeg:install": "node scripts/download-ffmpeg.js",
-    "test":   "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-
-  "keywords": ["lyrics", "whisper", "offline", "lrc", "sync"],
+  "keywords": [
+    "lyrics",
+    "whisper",
+    "offline",
+    "lrc",
+    "sync",
+    "visualizer",
+    "spectrum"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "chalk": "^4.1.2",
+    "fourier-transform": "^2.3.0",
     "inquirer": "^8.2.7",
     "js-yaml": "^4.1.0"
   }

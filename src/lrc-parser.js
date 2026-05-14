@@ -19,6 +19,7 @@ function parseLRC(filePath) {
   const lines = data.split("\n");
   const lyrics = [];
   let songTitle = "LyricSync Player";
+  let offsetSeconds = 0;
 
   for (const line of lines) {
     // Metadata: [ti:Song Title]
@@ -28,22 +29,33 @@ function parseLRC(filePath) {
       continue;
     }
 
-    // Timestamp: [mm:ss.cc] text
-    const timeMatch = line.match(/\[(\d+):(\d+)(?:\.(\d+))?\](.*)/);
-    if (!timeMatch) continue;
+    // Offset LRC estandar en milisegundos: [offset:+/-NNN]
+    const offsetMatch = line.match(/\[offset:([+-]?\d+)\]/i);
+    if (offsetMatch) {
+      offsetSeconds = parseInt(offsetMatch[1], 10) / 1000;
+      continue;
+    }
 
-    const minutes      = parseInt(timeMatch[1]);
-    const seconds      = parseInt(timeMatch[2]);
-    const centiseconds = timeMatch[3] ? parseInt(timeMatch[3]) / 100 : 0;
-    const text         = timeMatch[4].trim();
+    // Timestamp(s): [mm:ss.cc] text o [mm:ss.xxx] text
+    // Soporta multiples marcas en una misma linea: [00:10.00][00:20.00]Coro
+    const timeMatches = [...line.matchAll(/\[(\d+):(\d+)(?:\.(\d+))?\]/g)];
+    if (timeMatches.length === 0) continue;
 
-    if (text) {
+    const text = line.replace(/\[(\d+):(\d+)(?:\.(\d+))?\]/g, "").trim();
+    if (!text) continue;
+
+    for (const timeMatch of timeMatches) {
+      const minutes = parseInt(timeMatch[1], 10);
+      const seconds = parseInt(timeMatch[2], 10);
+      const fraction = timeMatch[3] ? parseFloat(`0.${timeMatch[3]}`) : 0;
       lyrics.push({
-        time: minutes * 60 + seconds + centiseconds,
+        time: Math.max(0, minutes * 60 + seconds + fraction + offsetSeconds),
         text,
       });
     }
   }
+
+  lyrics.sort((a, b) => a.time - b.time);
 
   return { lyrics, songTitle };
 }

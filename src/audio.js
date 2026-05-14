@@ -1,16 +1,12 @@
 /**
- * audio.js — Gestor de procesos ffplay (v3 - kill sincrónico)
+ * audio.js — Gestor de procesos ffplay (v5 — kill confirmado)
  *
- * FIX CRÍTICO: kill() usa execSync para taskkill en vez de spawn async.
- * Esto GARANTIZA que ffplay muere ANTES de crear un nuevo proceso.
- * El bloqueo momentáneo (~50-100ms) es imperceptible y no afecta a
- * readline.emitKeypressEvents (que maneja correctamente bytes buffereados).
- *
- * La versión anterior usaba spawn('taskkill') async, lo cual no esperaba
- * a que ffplay muriera → audio duplicado en cada seek.
+ * Al pausar, reanudar, cambiar volumen o hacer seek se puede relanzar ffplay.
+ * En Windows hay que esperar a que el proceso anterior muera para no crear
+ * multiples pistas sonando a la vez.
  */
 
-const { spawn, execSync } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const { resolveFFplay } = require("./ffmpeg-resolver");
 const { createLogger } = require("./logger");
 
@@ -22,24 +18,23 @@ class AudioManager {
    * @param {object} systemEnv - Variables de entorno con PATH extendido
    */
   constructor(audioFile, systemEnv) {
-    this.audioFile  = audioFile;
-    this.systemEnv  = systemEnv;
-    this.process    = null;
+    this.audioFile = audioFile;
+    this.systemEnv = systemEnv;
+    this.process = null;
     this.generation = 0;
     this.onNaturalEnd = null;
 
     // Safety net: matar ffplay si Node.js se cierra por cualquier razón
-    this._exitHandler = () => this._killSync();
+    this._exitHandler = () => this._killConfirmed();
     process.on("exit", this._exitHandler);
   }
 
   /**
    * Inicia la reproducción desde una posición dada.
-   * SIEMPRE mata el proceso anterior de forma SINCRÓNICA antes de crear uno nuevo.
+   * SIEMPRE mata el proceso anterior antes de crear uno nuevo.
    */
   start(position = 0, volume = 100) {
-    // Matar el proceso anterior — SINCRÓNICO, garantiza que muera
-    this._killSync();
+    this._killConfirmed();
 
     this.generation++;
     const gen = this.generation;
@@ -50,10 +45,11 @@ class AudioManager {
       return;
     }
 
-    const args = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", String(volume), "-i", this.audioFile];
+    const args = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", String(volume)];
     if (position > 0.5) {
       args.push("-ss", String(position.toFixed(2)));
     }
+    args.push("-i", this.audioFile);
 
     this.process = spawn(ffplayBin, args, {
       stdio: ["pipe", "ignore", "ignore"],
@@ -81,7 +77,7 @@ class AudioManager {
     if (this.process && this.process.stdin) {
       try {
         this.process.stdin.write(key);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -89,15 +85,14 @@ class AudioManager {
    * Mata el proceso ffplay actual. Público.
    */
   kill() {
-    this._killSync();
+    this._killConfirmed();
   }
 
   /**
-   * Kill SINCRÓNICO — mata ffplay y espera a que muera.
-   * Usa taskkill /F /T para destruir todo el árbol ANTES de .kill() de Node.
-   * Si llamamos .kill() primero, eliminamos al padre y el hijo se vuelve huérfano.
+   * Kill confirmado: mata ffplay y espera a que taskkill cierre su arbol.
+   * Este pequeño bloqueo evita clones de audio durante pausa/reanudar/seek.
    */
-  _killSync() {
+  _killConfirmed() {
     if (!this.process) return;
 
     const pid = this.process.pid;
@@ -105,19 +100,19 @@ class AudioManager {
     // Remover listeners para prevenir callbacks fantasma
     this.process.removeAllListeners();
 
-    // Paso 1: taskkill para matar todo el árbol de procesos
-    // SINCRÓNICO — asegura que el padre y los hijos mueran juntos.
+    // En Windows, taskkill /T evita dejar procesos de ffplay huerfanos.
     if (pid) {
       try {
-        execSync(`taskkill /F /T /PID ${pid}`, {
+        execFileSync("taskkill", ["/F", "/T", "/PID", pid.toString()], {
           stdio: "ignore",
           timeout: 1500,
+          windowsHide: true,
         });
-      } catch {} // Falla en Linux/Mac o si el proceso ya murió
+      } catch { }
     }
 
-    // Paso 2: kill nativo como fallback de garantía final.
-    try { this.process.kill("SIGKILL"); } catch {}
+    // Fallback multiplataforma si taskkill no existe o el proceso sigue vivo.
+    try { this.process.kill("SIGKILL"); } catch { }
 
     this.process = null;
   }
@@ -127,7 +122,7 @@ class AudioManager {
    * Remueve el handler de process.on('exit') para no interferir con el menú.
    */
   destroy() {
-    this._killSync();
+    this._killConfirmed();
     process.removeListener("exit", this._exitHandler);
   }
 }

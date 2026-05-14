@@ -13,6 +13,7 @@ const {
 } = require("../config");
 
 const { startPlayer } = require("../player");
+const { startAsciiPlayer } = require("../ascii-player");
 const { LyricSyncAPI } = require("../api-client");
 const { BatchProcessor } = require("../batch-worker");
 const { createLogger } = require("../logger");
@@ -184,6 +185,21 @@ async function playSong(audioPath) {
   await startPlayer(audioPath, lrcPath, SYSTEM_ENV);
 }
 
+// ─── Reproducir con Visualizador ASCII ───────────────────────────────────────
+async function playSongVisualizer(audioPath) {
+  const lrcPath = getLrcPath(audioPath);
+
+  if (!fs.existsSync(lrcPath)) {
+    console.log(chalk.yellow("\n  ⚠️  Esta canción aún no tiene letras generadas."));
+    console.log(chalk.gray("     Primero genéralas seleccionando 'Generar letras' en el menú.\n"));
+    return;
+  }
+
+  console.log(chalk.cyan(`\n  🌈 Iniciando Visualizador: ${chalk.bold.white(path.basename(audioPath))}\n`));
+
+  await startAsciiPlayer(audioPath, lrcPath, SYSTEM_ENV);
+}
+
 // ─── Iterador Batch (paralelo) ────────────────────────────────────────
 async function batchGenerateMenu(audioFiles) {
   const withoutLrc = audioFiles.filter(f => !hasLrc(f));
@@ -313,6 +329,7 @@ async function songActionMenu(audioPath, currentFolder) {
 
   if (lrcExists) {
     choices.push({ name: chalk.green("   \u25b6\ufe0f  Iniciar Reproductor Interactivo"), value: "play" });
+    choices.push({ name: chalk.magenta("   🌈 Reproducir con Visualizador Espectro"), value: "play_viz" });
     choices.push({ name: chalk.yellow("   \ud83d\udd04 Sobreescribir Letra (Regenerar track)"), value: "regen" });
     choices.push({ name: chalk.blue("   \ud83c\udfaf Sincronizar con letra existente (Forced Alignment)"), value: "align" });
     choices.push({ name: chalk.cyan("   \ud83d\udcdd Inspeccionar archivo de letras (.lrc)"), value: "view" });
@@ -335,6 +352,10 @@ async function songActionMenu(audioPath, currentFolder) {
   switch (action) {
     case "play":
       await playSong(audioPath);
+      break;
+
+    case "play_viz":
+      await playSongVisualizer(audioPath);
       break;
 
     case "gen_small":
@@ -405,6 +426,7 @@ module.exports = {
   generateLrc,
   alignLyrics,
   playSong,
+  playSongVisualizer,
   batchGenerateMenu,
   songActionMenu,
 };
